@@ -43,7 +43,9 @@ function Encode() {
   var options = {};
   options.address = document.getElementById("smsReceiver").value;
   options.body = document.getElementById("smsMessage").value;
-  options.encoding = parseInt(document.getElementById("Encoding").options[document.getElementById("Encoding").selectedIndex].value, 10);
+  options.encoding = parseInt(document.getElementById("smsEncoding").options[document.getElementById("smsEncoding").selectedIndex].value, 10);
+  options.priority = parseInt(document.getElementById("smsPriority").options[document.getElementById("smsPriority").selectedIndex].value, 10);
+  options.timestamp = new Date();
   CdmaPDUHelper.sendSMS(options);
   return;
 }
@@ -284,8 +286,8 @@ var pduHelper = {
   },
 
   BcdEncoder: function BcdEncoder(value) {
-    pduHelper.writeBits((value >> 4) & 0xF, 4);
-    pduHelper.writeBits(value & 0xF, 4);
+    pduHelper.writeBits((value / 10), 4);
+    pduHelper.writeBits((value % 10), 4);
   }
 };
 
@@ -322,7 +324,9 @@ var CdmaPDUHelper = {
     // Bearer Data
     this.smsParameterEncoder(8, {
       msgId: {type: 2, id: 1},
-      msgData: {encoding: options.encoding, body: options.body}
+      msgData: {encoding: options.encoding, body: options.body},
+      timestamp: options.timestamp,
+      priority: options.priority
     });
   },
 
@@ -395,6 +399,17 @@ var CdmaPDUHelper = {
         case 'msgData':
           pduHelper.writeHexOctet(1);
           this.messageEncoder(parameter);
+          break;
+        case 'timestamp':
+          pduHelper.writeHexOctet(3);
+          this.timeStampEncoder(parameter);
+          break;
+        case 'priority':
+          pduHelper.writeHexOctet(8);
+          pduHelper.writeHexOctet(1);
+          pduHelper.writeBits(parameter, 2);
+          // Add padding
+          pduHelper.flushWithPadding();
           break;
       }
     }
@@ -759,7 +774,7 @@ var CdmaPDUHelper = {
   messageDecoder: function messageDecoder(encoding, msgSize) {
     var message = "",
         msgDigit = 0;
-    while (msgSize >= 0) {
+    while (msgSize > 0) {
       switch (encoding) {
         case 0: // Octec
           msgDigit = pduHelper.readBits(8);
