@@ -43,7 +43,8 @@ function Encode() {
   var options = {};
   options.address = document.getElementById("smsReceiver").value;
   options.body = document.getElementById("smsMessage").value;
-  options.encoding = parseInt(document.getElementById("smsEncoding").options[document.getElementById("smsEncoding").selectedIndex].value, 10);
+  //Auto Detect
+  //options.encoding = parseInt(document.getElementById("smsEncoding").options[document.getElementById("smsEncoding").selectedIndex].value, 10);
   options.priority = parseInt(document.getElementById("smsPriority").options[document.getElementById("smsPriority").selectedIndex].value, 10);
   options.timestamp = new Date();
   CdmaPDUHelper.sendSMS(options);
@@ -291,6 +292,162 @@ var pduHelper = {
   }
 };
 
+/*
+ * CDMA SMS Parameter Chart
+ * Mandatory is implemented first, then common optional, then others
+ *
+ * P2P:Point-to-Point
+ * BCAST:Broadcast
+ * ACK:Acknowledge
+ *
+ * MO:Mobile-Originated(Sender)
+ * MT:Mobile-Termiated(Receiver)
+ *
+ * M:Mandatory, O:Optional, X:Unavailable
+ *
+ *                       P2P-MO   P2P-MT   BCAST   ACK-MO   ACK-MT
+ * Teleservice ID           M        M       X        X        X
+ * Service Category         O        O       M        X        X
+ * Originating Address      X        M       X        X        X
+ * Originating Subaddress   X        O       X        X        X
+ * Destination Address      M        X       X        M        X
+ * Destination Subaddress   O        X       X        O        O
+ * Bearer Reply Option      O        O       X        X        X
+ * Cause codes              X        X       X        M        M
+ * Beaer Data               O        O       O        X        X
+ */
+
+/*
+ * CDMA SMS Teleservice-Subparameter Chart
+ * Mandatory is implemented first, then common optional, then others
+ *
+ * BCAST:Broadcast
+ * CMT-91:IS-91 Extended Protocol Enhanced Services
+ * WPT:Wireless Paging Teleservice
+ * WMT:Wireless Messaging Teleservice
+ * VMN:Voice Mail Notification
+ * WAP:Wireless Application Protocol
+ * WEMT:Wireless Enhanced Messaging Teleservice
+ * SCPT:Service Category Programming Teleservice
+ * CATPT:Card Application Toolkit Protocol Teleservice
+ *
+ * MO:Mobile-Originated(Sender)
+ * MT:Mobile-Termiated(Receiver)
+ * ACK:Acknowledge
+ *
+ * M:Mandatory, O:Optional, X:Unavailable, C:Conditional
+ *
+ *                                    BCAST  CMT-91  WPT  WPT  WMT  WMT
+ *                                      MT     MT     MT   MO   MT   MO
+ * Message Identifier                   M       M     M    M    M    M
+ * User Data                            O       M     O    O    O    O
+ * Message Center Time Stamp            O       X     O    X    O    O
+ * Validity Period - Absolute           O       X     X    X    O    O
+ * Validity Period - Relative           O       X     X    X    O    O
+ * Deferred Delivery Time - Absolute    X       X     X    X    X    X
+ * Deferred Delivery Time - Relative    X       X     X    X    X    X
+ * Priority Indicator                   O       X     O    O    O    O
+ * Privacy Indicator                    X       X     O    O    O    O
+ * Reply Option                         X       X     O    O    O    O
+ * Number of Messages                   X       X     O    X    O    O
+ * Alert on Message Delivery            O       X     X    X    O    O
+ * Language Indicator                   O       X     X    X    O    O
+ * Call-Back Number                     O       X     O    O    O    O
+ * Message Display Mode                 O       X     O    X    O    O
+ * Multiple Encoding User Data          O       X     O    O    O    O
+ * Message Deposit Index                X       X     O    O    O    O
+ * Service Category Program Data        X       X     X    X    X    X
+ * Service Category Program Results     X       X     X    X    X    X
+ * Message Status                       X       X     X    X    X    X
+ * T-P Failure Cause                    X       X     X    X    X    X
+ * Enhanced VMX                         X       X     X    X    X    X
+ * Enhanced VMX ACK                     X       X     X    X    X    X
+ *
+ *
+ *                                     VMN  WAP  WAP  WEMT  WEMT  SCPT  SCPT
+ *                                      MT   MT   MO   MT    MO    MT    MO
+ * Message Identifier                   M    M    M    M     M     M     M
+ * User Data                            O    M    M    M     M     X     X
+ * Message Center Time Stamp            O    X    X    O     X     O     X
+ * Validity Period - Absolute           X    X    X    O     O     X     X
+ * Validity Period - Relative           X    X    X    O     O     X     X
+ * Deferred Delivery Time - Absolute    X    X    X    X     O     X     X
+ * Deferred Delivery Time - Relative    X    X    X    X     O     X     X
+ * Priority Indicator                   O    X    X    O     O     X     X
+ * Privacy Indicator                    O    X    X    O     O     X     X
+ * Reply Option                         X    X    X    O     O     X     X
+ * Number of Messages                   M    X    X    O     X     X     X
+ * Alert on Message Delivery            X    X    X    O     O     X     X
+ * Language Indicator                   X    X    X    O     O     X     X
+ * Call-Back Number                     X    X    X    O     O     X     X
+ * Message Display Mode                 X    X    X    O     X     X     X
+ * Multiple Encoding User Data          O    X    X    O     O     X     X
+ * Message Deposit Index                X    X    X    O     O     X     X
+ * Service Category Program Data        X    X    X    X     X     M     X
+ * Service Category Program Results     X    X    X    X     X     X     M
+ * Message Status                       X    X    X    X     X     X     X
+ * T-P Failure Cause                    X    X    X    X     X     X     X
+ * Enhanced VMX                         O    X    X    X     X     X     X
+ * Enhanced VMX ACK                     O    X    X    X     X     X     X
+ *
+ *
+ *                                    CATPT  CATPT   CATPT
+ *                                      MT     MO   USER ACK
+ * Message Identifier                   M      M       M
+ * User Data                            M      M       O
+ * User Response Code                   X      X       O
+ * Message Center Time Stamp            X      X       X
+ * Validity Period - Absolute           X      X       X
+ * Validity Period - Relative           X      X       X
+ * Deferred Delivery Time - Absolute    X      X       X
+ * Deferred Delivery Time - Relative    X      X       X
+ * Priority Indicator                   X      X       X
+ * Privacy Indicator                    X      X       X
+ * Reply Option                         X      X       X
+ * Number of Messages                   X      X       X
+ * Alert on Message Delivery            X      X       X
+ * Language Indicator                   X      X       X
+ * Call-Back Number                     X      X       X
+ * Message Display Mode                 X      X       X
+ * Multiple Encoding User Data          X      X       X
+ * Message Deposit Index                X      X       X
+ * Service Category Program Data        X      X       X
+ * Service Category Program Results     X      X       X
+ * Message Status                       X      X       X
+ * T-P Failure Cause                    X      X       X
+ * Enhanced VMX                         X      X       X
+ * Enhanced VMX ACK                     X      X       X
+ *
+ *
+ *                                    SMS    SMS     SMS    SMS     SMS     SMS
+ *                                   CANCEL  USER  DELIVER  READ  DELIVER  SUBMIT
+ *                                           ACK     ACK    ACK    REPORT  REPORT
+ * Message Identifier                  M      M       M      M        M       M
+ * User Data                           X      O       O      O        O       O
+ * User Response Code                  X      O       X      O        X       X
+ * Message Center Time Stamp           X      O       O      X        X       X
+ * Validity Period - Absolute          X      X       X      X        X       X
+ * Validity Period - Relative          X      X       X      X        X       X
+ * Deferred Delivery Time - Absolute   X      X       X      X        X       X
+ * Deferred Delivery Time - Relative   X      X       X      X        X       X
+ * Priority Indicator                  X      X       X      X        X       X
+ * Privacy Indicator                   X      X       X      X        X       X
+ * Reply Option                        X      X       X      X        X       X
+ * Number of Messages                  X      X       X      X        X       X
+ * Alert on Message Delivery           X      X       X      X        X       X
+ * Language Indicator                  X      X       X      X        O       O
+ * Call-Back Number                    X      X       X      X        X       X
+ * Message Display Mode                X      X       X      X        X       X
+ * Multiple Encoding User Data         X      O       O      O        O       O
+ * Message Deposit Index               X      O       X      O        X       X
+ * Service Category Program Data       X      X       X      X        X       X
+ * Service Category Program Results    X      X       X      X        X       X
+ * Message Status                      X      X       O      X        X       X
+ * T-P Failure Cause                   X      X       X      X        C       C
+ * Enhanced VMX                        X      X       X      X        X       X
+ * Enhanced VMX ACK                    X      X       X      X        X       X
+ */
+
 var CdmaPDUHelper = {
   dtmfChars: " 1234567890*#   ",
 
@@ -309,6 +466,20 @@ var CdmaPDUHelper = {
   },
 
   writeMessage: function writeMessage(options) {
+    // Try to detect 7-bit ASCII or Unicode
+    // FIXME: How to detect others?
+    options.encoding = 2; // Default 7-bit ASCII, FIXME: set to system default?
+    for (var i = 0; i < options.body.length; i++) {
+      var charCode = options.body.charCodeAt(i);
+      if (charCode > 0xFF) {
+        options.encoding = 4; // Unicode Detected
+        break;
+      } else if (charCode > 0x7F) {
+        options.encoding = 0; // Octet
+      }
+    }
+    debug("Detected encoding: " + msgEncodingMap[options.encoding] + "(" + options.encoding + ")");
+
     // Point-to-Point
     pduHelper.writeHexOctet(0);
 
@@ -551,7 +722,7 @@ var CdmaPDUHelper = {
     // Table 3.4-1, 3.4.2.1-1, 3.4.2.2-1, 3.4.2.3-1
     var msg = {
       // P2P:Point-to-Point, BCAST:Broadcast, ACK:Acknowledge
-      // MO:Mobile-Originated, MT:Mobile-Termiated
+      // MO:Mobile-Originated(Sender), MT:Mobile-Termiated(Receiver)
       // M:Mandatory, O:Optional, X:Unavailable
       smsType:        null, // 0:Point-to-Point
                             // 1:Braodcast
@@ -1024,3 +1195,21 @@ var msgEncodingMap = [
   "Latin",
   "GSM 7-bit default alphabet"
 ];
+
+var GSM_7_BIT_DEFAULT_ALPHABET_TABLE =
+  // 01.....23.....4.....5.....6.....7.....8.....9.....A.B.....C.....D.E.....F.....
+    "@\u00a3$\u00a5\u00e8\u00e9\u00f9\u00ec\u00f2\u00c7\n\u00d8\u00f8\r\u00c5\u00e5"
+  // 0.....12.....3.....4.....5.....6.....7.....8.....9.....A.....B.....C.....D.....E.....F.....
+  + "\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039e\uffff\u00c6\u00e6\u00df\u00c9"
+  // 012.34.....56789ABCDEF
+  + " !\"#\u00a4%&'()*+,-./"
+  // 0123456789ABCDEF
+  + "0123456789:;<=>?"
+  // 0.....123456789ABCDEF
+  + "\u00a1ABCDEFGHIJKLMNO"
+  // 0123456789AB.....C.....D.....E.....F.....
+  + "PQRSTUVWXYZ\u00c4\u00d6\u00d1\u00dc\u00a7"
+  // 0.....123456789ABCDEF
+  + "\u00bfabcdefghijklmno"
+  // 0123456789AB.....C.....D.....E.....F.....
+  + "pqrstuvwxyz\u00e4\u00f6\u00f1\u00fc\u00e0";
