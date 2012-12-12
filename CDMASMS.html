@@ -79,12 +79,13 @@
   </td>
   <td>
     <h1>Encoder Test</h1>
-    Receiver <input type="text" id="smsReceiver" />
+    Receiver <input type="text" id="smsReceiver" value="123456789"/>
     <br />(encoded by DTFM)<br /><br />
-    Message <textarea id="smsMessage" /></textarea><br />
+    Message <textarea id="smsMessage" />abc123*#</textarea><br />
     Encoding <select id="Encoding">
-      <option value="7bitAscii">7-bit ASCII</option>
-      <option value="Unicode" />UNICODE</option>
+      <option value="0">ASCII</option>
+      <option value="2" selected>7-bit ASCII</option>
+      <option value="4">Unicode</option>
     </select><br />
     <button onclick="Encode();">Encode</button>
     <div id="encoderResult"></div><br />
