@@ -1,0 +1,84 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <script type="text/javascript" src="CDMASMS.js"></script>
+  <style>
+  div {
+    width: 600px;
+    word-wrap: break-word;
+    vertical-align:text-top;
+    text-align:left;
+  }
+  table, tr, td {
+    border-width: 2px;
+    border-spacing: 0px;
+    border-style: outset;
+    border-color: gray;
+    border-collapse: separate;
+    background-color: white;
+    vertical-align:text-top;
+  }
+  label {
+    color : red;
+    background: yellow;
+  }
+  input, text, textarea, select {
+    color: white;
+    background: black;
+    width: 500px;
+  }
+  </style>
+</head>
+
+<body >
+  <table>
+  <tr><td>
+    <h1>Decoder Test</h1>
+    <div>
+      <h2>Reference PDU</h2>
+      <input type="radio" name="testPDU" id="testPDU01" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU01_content').innerHTML;"/><label for="testPDU01" id="testPDU01_content">0000021002020702C54EA488649C0601FC08120003101BB00103100C100306110804182257</label></label><br />
+      <a href="http://blog.csdn.net/lele52141/article/details/6754776" target="_blank">Test data source</a><br /><br />
+
+      <input type="radio" name="testPDU" id="testPDU02" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU02_content').innerHTML;"/><label for="testPDU02" id="testPDU02_content">0000021002040602448d159e240601fc08100003200010010910461c58d8b266a918</label><br />
+      <a href="http://blog.csdn.net/arthur_zeng/article/details/7059783" target="_blank">Test data source</a>, error corrected<br /><br />
+
+      <input type="radio" name="testPDU" id="testPDU03" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU03_content').innerHTML;"/><label for="testPDU03" id="testPDU03_content">0000021002040702C4CC484898580601FC08220003200010010A104F88307C61F106C41004060807311647090801000901000A01C0</label><br />
+      <a href="http://blog.csdn.net/arthur_zeng/article/details/7059783" target="_blank">Test data source</a><br /><br />
+
+      <input type="radio" name="testPDU" id="testPDU04" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU04_content').innerHTML;"/><label for="testPDU04" id="testPDU04_content">0000021002020702C4CC4848985806012408220003100010010A104F88307C61F106C41003061104161701270801000901000A01C0</label><br />
+      <a href="http://blog.csdn.net/arthur_zeng/article/details/7059783" target="_blank">Test data source</a><br /><br />
+
+      <input type="radio" name="testPDU" id="testPDU05" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU05_content').innerHTML;"/><label for="testPDU05" id="testPDU05_content">00000210020207028CE95DCC65800601FC08150003168D3001061024183060800306101004044847</label><br />
+      <a href="http://stackoverflow.com/questions/11182650/cdma-pdu-parsing-on-android" target="_blank">Test data source</a><br /><br />
+
+      <input type="radio" name="testPDU" id="testPDU06" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU06_content').innerHTML;"/><label for="testPDU06" id="testPDU06_content">0000021002020702c54ce225a8a80601c0089d00031001e8018e2230018801780193108b09fb087b317b012b6a080162e38c8e63b422e07b65980162b942e872e4b3b4246f7a70500162e54bbf9a7053f67c7e3801729f544c0b108bb423918a75d00163317a70033b0ae07ce3e00162b943108bb4236b54158a71680162ff5a7283b42371c33b2b71c29dd80173108b09fb087b317c1a933cb80162b943659b6a0bb4227122e5c00306081229192611</label><br />
+      <a href="http://blog.lytsing.org/archives/180.html" target="_blank">Test data source</a>, Unicode<br /><br />
+
+      <input type="radio" name="testPDU" id="testPDU07" onclick="document.getElementById('smsPDU').value = document.getElementById('testPDU07_content').innerHTML;"/><label for="testPDU07" id="testPDU07_content">0000021002020702c54ce225a8a806014c084d00031001f8013e20f00190017801900162dfca7004b1acb1abb4239614c6700162963b2b12b9827ae310c001729f544c0b108bb423918a75d00163317a70029f52e07cf0f80306081229192616</label><br />
+      <a href="http://blog.lytsing.org/archives/180.html" target="_blank">Test data source</a>, Unicode<br /><br />
+    </div>
+    <hr />
+    PDU String <textarea id="smsPDU" /></textarea><br />
+    <button onclick="Decode();">Decode</button>
+    <div id="decoderResult"></div><br />
+  </td>
+  <td>
+    <h1>Encoder Test</h1>
+    Receiver <input type="text" id="smsReceiver" />
+    <br />(encoded by DTFM)<br /><br />
+    Message <textarea id="smsMessage" /></textarea><br />
+    Encoding <select id="Encoding">
+      <option value="7bitAscii">7-bit ASCII</option>
+      <option value="Unicode" />UNICODE</option>
+    </select><br />
+    <button onclick="Encode();">Encode</button>
+    <div id="encoderResult"></div><br />
+  </td></tr>
+  <tr><td colspan="2">
+    <h1>Debug Log</h1>
+    <div id="debugLog"></div>
+  </td></tr>
+  </table>
+</body>
+
+</html>
