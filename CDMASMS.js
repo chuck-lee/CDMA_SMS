@@ -163,17 +163,17 @@ var Buf = {
  * Basic PDU I/O function for both GSM and CDMA, all read/write operation
  * are applied to Buf directly.
  */
-var pduHelper = {
+var bitBuffer = {
   readCache: 0,
   readCacheSize: 0,
+  readBuffer: [],
+  readIndex: 0,
   writeCache: 0,
   writeCacheSize: 0,
+  writeBuffer: [],
 
-  /*
-   * Read function
-   */
-  // Max length is 32 because we use integer as read buffer.
-  // All get functions are implemented based on bitwise operation.
+  // Max length is 32 because we use integer as read/write cache.
+  // All read/write functions are implemented based on bitwise operation.
   readBits: function readBits(length) {
     if (length <= 0 || length > 32) {
       return null;
@@ -182,7 +182,7 @@ var pduHelper = {
     if (length > this.readCacheSize) {
       var bytesToRead = Math.ceil((length - this.readCacheSize) / 8);
       for(var i = 0; i < bytesToRead; i++) {
-        this.readCache = (this.readCache << 8) | (Buf.readUint8() & 0xFF);
+        this.readCache = (this.readCache << 8) | (this.readBuffer[this.readIndex++] & 0xFF);
         this.readCacheSize += 8;
       }
     }
@@ -197,31 +197,6 @@ var pduHelper = {
     return result;
   },
 
-  // Drop what still in buffer and goto next 8-byte alignment.
-  nextOctecAlign: function nextOctecAlign() {
-    this.readCache = 0;
-    this.readCacheSize = 0;
-  },
-
-  readHexNibble: function readHexNibble() {
-    return this.readBits(4);
-  },
-
-  readHexOctet: function readHexOctet() {
-    return this.readBits(8);
-  },
-
-  readHexOctetArray: function readHexOctetArray(length) {
-    var array = new Uint8Array(length);
-    for (var i = 0; i < length; i++) {
-      array[i] = this.readHexOctet();
-    }
-    return array;
-  },
-
-  /*
-   * Write function
-   */
   writeBits: function writeBits(value, length) {
     if (length <= 0 || length > 32) {
       return;
@@ -243,7 +218,7 @@ var pduHelper = {
           valueMask = (1 << mergeLength) - 1;
 
       this.writeCache = (this.writeCache << mergeLength) | ((value >> (length - mergeLength)) & valueMask);
-      Buf.writeUint8(this.writeCache & 0xFF);
+      this.writeBuffer.push(this.writeCache & 0xFF);
       length -= mergeLength;
     }
 
@@ -252,7 +227,7 @@ var pduHelper = {
     this.writeCacheSize = 0;
     while (length >= 8) {
       length -= 8;
-      Buf.writeUint8((value >> length) & 0xFF);
+      this.writeBuffer.push((value >> length) & 0xFF);
     }
 
     // Rest part is saved into cache
@@ -262,33 +237,62 @@ var pduHelper = {
     return;
   },
 
+  // Drop what still in read cache and goto next 8-byte alignment.
+  // There might be a better naming.
+  nextOctetAlign: function nextOctetAlign() {
+    this.readCache = 0;
+    this.readCacheSize = 0;
+  },
+
+  // Flush current write cache to Buf with padding 0s.
+  // There might be a better naming.
   flushWithPadding: function flushWithPadding() {
     if (this.writeCacheSize) {
-      Buf.writeUint8(this.writeCache << (8 - this.writeCacheSize));
+      this.writeBuffer.push(this.writeCache << (8 - this.writeCacheSize));
     }
     this.writeCache = 0;
     this.writeCacheSize = 0;
   },
 
-  writeHexNibble: function writeHexNibble(value) {
-    this.writeBits(value, 4);
+  startWrite: function startWrite(dataBuffer) {
+    this.writeBuffer = dataBuffer;
+    this.writeCache = 0;
+    this.writeCacheSize = 0;
   },
 
-  writeHexOctet: function writeHexOctet(value) {
-    this.writeBits(value, 8);
+  startRead: function startRead(dataBuffer) {
+    this.readBuffer = dataBuffer;
+    this.readCache = 0;
+    this.readCacheSize = 0;
+    this.readIndex = 0;
   },
 
+  getWriteBufferSize: function getWriteBufferSize() {
+    return this.writeBuffer.length;
+  },
+
+  overwriteWriteBuffer: function overwriteWriteBuffer(position, data) {
+    var writeLength = data.length;
+    if (writeLength + position >= this.writeBuffer.length) {
+      writeLength = this.writeBuffer.length - position;
+    }
+    for (var i = 0; i < writeLength; i++) {
+      this.writeBuffer[i] = data[i];
+    }
+  }
+};
+var pduHelper = {
   /*
    * Common helper function
    */
   BcdDecoder: function BcdDecoder() {
-    return pduHelper.readBits(4) * 10 +
-            pduHelper.readBits(4);
+    return bitBuffer.readBits(4) * 10 +
+            bitBuffer.readBits(4);
   },
 
   BcdEncoder: function BcdEncoder(value) {
-    pduHelper.writeBits((value / 10), 4);
-    pduHelper.writeBits((value % 10), 4);
+    bitBuffer.writeBits((value / 10), 4);
+    bitBuffer.writeBits((value % 10), 4);
   }
 };
 
@@ -449,7 +453,7 @@ var pduHelper = {
  */
 
 var CdmaPDUHelper = {
-  dtmfChars: " 1234567890*#   ",
+  dtmfChars: "D1234567890*#ABC",
 
   /**
    * Entry point for SMS encoding
@@ -458,14 +462,15 @@ var CdmaPDUHelper = {
     // Deal with some overhead
     Buf.newParcel();
 
-    // Encoder~
+    bitBuffer.startWrite(Buf.outgoingBytes);
+    // Encoder
     this.writeMessage(options);
 
     // Send message
     Buf.sendParcel();
   },
 
-  writeMessage: function writeMessage(options) {
+  encodingDetection: function encodingDetection(options) {
     // Try to detect 7-bit ASCII or Unicode
     // FIXME: How to detect others?
     options.encoding = 2; // Default 7-bit ASCII, FIXME: set to system default?
@@ -478,10 +483,14 @@ var CdmaPDUHelper = {
         options.encoding = 0; // Octet
       }
     }
+  },
+
+  writeMessage: function writeMessage(options) {
+    this.encodingDetection(options);
     debug("Detected encoding: " + msgEncodingMap[options.encoding] + "(" + options.encoding + ")");
 
     // Point-to-Point
-    pduHelper.writeHexOctet(0);
+    bitBuffer.writeBits(0, 8);
 
     // Teleservice Index : 4098(CDMA Cellular Messaging Teleservice)
     this.smsParameterEncoder(0, 4098);
@@ -502,15 +511,15 @@ var CdmaPDUHelper = {
   },
 
   smsParameterEncoder: function smsParameterEncoder(id, data) {
-    pduHelper.writeHexOctet(id);
+    bitBuffer.writeBits(id, 8);
     switch(id) {
       case 0: // Teleservice Identify, C.S0015-B v2.0, 3.4.3.1
-        pduHelper.writeHexOctet(2);
-        pduHelper.writeBits(data, 16);
+        bitBuffer.writeBits(2, 8);
+        bitBuffer.writeBits(data, 16);
         break;
       case 1: // Service Category, C.S0015-B v2.0, 3.4.3.2
-        pduHelper.writeHexOctet(2);
-        pduHelper.writeBits(data, 16);
+        bitBuffer.writeBits(2, 8);
+        bitBuffer.writeBits(data, 16);
         break;
       case 2: // Originate Address, C.S0015-B v2.0, 3.4.3.3
         this.addressEncoder(data);
@@ -525,20 +534,20 @@ var CdmaPDUHelper = {
         // Unsupported
         break;
       case 6: // Bearer Reply Option, C.S0015-B v2.0, 3.4.3.5
-        pduHelper.writeHexOctet(1);
-        pduHelper.writeBits(data, 6);
-        pduHelper.flushWithPadding();
+        bitBuffer.writeBits(1, 8);
+        bitBuffer.writeBits(data, 6);
+        bitBuffer.flushWithPadding();
         break;
       case 7: // Cause Code, C.S0015-B v2.0, 3.4.3.6
         if(data.errorClass === 0) {
-          pduHelper.writeHexOctet(1);
+          bitBuffer.writeBits(1, 8);
         } else {
-          pduHelper.writeHexOctet(2);
+          bitBuffer.writeBits(2, 8);
         }
-        pduHelper.writeBits(data.replySeq, 6);
-        pduHelper.writeBits(data.errorClass, 2);
+        bitBuffer.writeBits(data.replySeq, 6);
+        bitBuffer.writeBits(data.errorClass, 2);
         if (data.errorClass !== 0) {
-          pduHelper.writeBits(data.causeCode, 8);
+          bitBuffer.writeBits(data.causeCode, 8);
         }
         break;
       case 8: // Bearer Data, C.S0015-B v2.0, 3.4.3.7, too complex so implement
@@ -552,35 +561,35 @@ var CdmaPDUHelper = {
 
   smsSubparameterEncoder: function smsSubparameterEncoder(data) {
     // Reserve one byte for size
-    pduHelper.writeHexOctet(0);
+    bitBuffer.writeBits(0, 8);
     var lengthPosition = Buf.getCurrentOutgoinPosition();
 
     for (key in data) {
       var parameter = data[key];
       switch (key) {
         case 'msgId':
-          pduHelper.writeHexOctet(0);
-          pduHelper.writeHexOctet(3);
-          pduHelper.writeBits(parameter.type || 0, 4);
-          pduHelper.writeBits(parameter.id || 0, 16);
-          pduHelper.writeBits(parameter.userHeader || 0, 1);
+          bitBuffer.writeBits(0, 8);
+          bitBuffer.writeBits(3, 8);
+          bitBuffer.writeBits(parameter.type || 0, 4);
+          bitBuffer.writeBits(parameter.id || 0, 16);
+          bitBuffer.writeBits(parameter.userHeader || 0, 1);
           // Add padding
-          pduHelper.flushWithPadding();
+          bitBuffer.flushWithPadding();
           break;
         case 'msgData':
-          pduHelper.writeHexOctet(1);
+          bitBuffer.writeBits(1, 8);
           this.messageEncoder(parameter);
           break;
         case 'timestamp':
-          pduHelper.writeHexOctet(3);
+          bitBuffer.writeBits(3, 8);
           this.timeStampEncoder(parameter);
           break;
         case 'priority':
-          pduHelper.writeHexOctet(8);
-          pduHelper.writeHexOctet(1);
-          pduHelper.writeBits(parameter, 2);
+          bitBuffer.writeBits(8, 8);
+          bitBuffer.writeBits(1, 8);
+          bitBuffer.writeBits(parameter, 2);
           // Add padding
-          pduHelper.flushWithPadding();
+          bitBuffer.flushWithPadding();
           break;
       }
     }
@@ -593,39 +602,39 @@ var CdmaPDUHelper = {
 
   messageEncoder: function messageEncoder(msgData) {
     // Reserve one byte for size
-    pduHelper.writeHexOctet(0);
+    bitBuffer.writeBits(0, 8);
     var lengthPosition = Buf.getCurrentOutgoinPosition();
 
     if (!msgData.encoding)
       msgData.encoding = 0;
 
-    pduHelper.writeBits(msgData.encoding, 5);
+    bitBuffer.writeBits(msgData.encoding, 5);
 
     if (msgData.encoding === 1 ||
         msgData.encoding === 10) {
-        pduHelper.writeBits(msgData.type || 0, 8);
+        bitBuffer.writeBits(msgData.type || 0, 8);
     }
 
     var msgSize = msgData.body.length;
-    pduHelper.writeBits(msgSize, 8);
+    bitBuffer.writeBits(msgSize, 8);
 
     for (var i = 0; i < msgSize; i++) {
       switch (msgData.encoding) {
         case 0: // Octec
           var msgDigit = msgData.body.charCodeAt(i);
-          pduHelper.writeBits(msgDigit, 8);
+          bitBuffer.writeBits(msgDigit, 8);
           break;
         case 1: // IS-91 Extended Protocol Message
           break;
         case 2: // 7-bit ASCII
           var msgDigit = msgData.body.charCodeAt(i);
-          pduHelper.writeBits(msgDigit, 7);
+          bitBuffer.writeBits(msgDigit, 7);
           break;
         case 3: // IA5
           break;
         case 4: // Unicode
          var msgDigit = msgData.body.charCodeAt(i);
-          pduHelper.writeBits(msgDigit, 16);
+          bitBuffer.writeBits(msgDigit, 16);
           break;
         case 5: // Shift-6 JIS
           break;
@@ -643,7 +652,7 @@ var CdmaPDUHelper = {
     }
 
     // Add padding
-    pduHelper.flushWithPadding();
+    bitBuffer.flushWithPadding();
 
     // Calculate data size and refill
     var endPosition = Buf.getCurrentOutgoinPosition(),
@@ -653,37 +662,37 @@ var CdmaPDUHelper = {
 
   addressEncoder: function addressEncoder(addressInfo) {
     // Reserve one byte for size
-    pduHelper.writeHexOctet(0);
+    bitBuffer.writeBits(0, 8);
     var lengthPosition = Buf.getCurrentOutgoinPosition();
 
     // Fill address options
-    pduHelper.writeBits(addressInfo.digitMode, 1);
+    bitBuffer.writeBits(addressInfo.digitMode, 1);
     if ( addressInfo.numberMode !== null ) {
-      pduHelper.writeBits(addressInfo.numberMode, 1);
+      bitBuffer.writeBits(addressInfo.numberMode, 1);
     }
     if (addressInfo.digitMode === 1) {
-      pduHelper.writeBits(addressInfo.numberType || 0, 3);
+      bitBuffer.writeBits(addressInfo.numberType || 0, 3);
       if (addressInfo.numberMode === 0) {
-        pduHelper.writeBits(addressInfo.numberPlan || 0, 4);
+        bitBuffer.writeBits(addressInfo.numberPlan || 0, 4);
       }
     }
 
     // Fill address size
-    pduHelper.writeBits(addressInfo.address.length, 8);
+    bitBuffer.writeBits(addressInfo.address.length, 8);
 
     // Fill address
     for (var i = 0; i < addressInfo.address.length; i++) {
       if (addressInfo.digitMode === 1) {
         var addressDigit = addressInfo.address.charCodeAt(i) & 0x7F;
-        pduHelper.writeBits(addressDigit, 8);
+        bitBuffer.writeBits(addressDigit, 8);
       } else {
         var addressDigit = this.dtmfChars.indexOf(addressInfo.address.charAt(i)) || 0;
-        pduHelper.writeBits(addressDigit, 4);
+        bitBuffer.writeBits(addressDigit, 4);
       }
     }
 
     // Add padding
-    pduHelper.flushWithPadding();
+    bitBuffer.flushWithPadding();
 
     // Calculate data size and refill
     var endPosition = Buf.getCurrentOutgoinPosition(),
@@ -705,7 +714,7 @@ var CdmaPDUHelper = {
       year -= 2000;
     }
 
-    pduHelper.writeHexOctet(6);
+    bitBuffer.writeBits(6, 8);
     pduHelper.BcdEncoder(year);
     pduHelper.BcdEncoder(month);
     pduHelper.BcdEncoder(day);
@@ -741,8 +750,10 @@ var CdmaPDUHelper = {
     },
     pduSize = Buf.readParcelSize();
 
+    bitBuffer.startRead(Buf.incomingBytes);
+
     // SMS Type, C.S0015-B v2.0, Table 3.4-1
-    msg.smsType = pduHelper.readHexOctet();
+    msg.smsType = bitBuffer.readBits(8);
     pduSize--;
     debug("Message Type :" + smsTypeMap[msg.smsType] + "(" + msg.smsType + ")");
     /*
@@ -762,7 +773,7 @@ var CdmaPDUHelper = {
     //*/
 
     while (pduSize > 0) {
-      var parameterId = pduHelper.readHexOctet();
+      var parameterId = bitBuffer.readBits(8);
       if (typeof parameterId === 'undefined')
         break;
 
@@ -786,16 +797,16 @@ var CdmaPDUHelper = {
    */
   addressDecoder: function addressDecoder(forceNumberMode) {
     // C.S0015-B v2.0, 3.4.3.3
-    var digitMode = pduHelper.readBits(1),
-        numberMode = forceNumberMode || pduHelper.readBits(1),
+    var digitMode = bitBuffer.readBits(1),
+        numberMode = forceNumberMode || bitBuffer.readBits(1),
         numberType = null,
         numberPlan = null,
         address = "";
 
     if (digitMode === 1) {
-      numberType = pduHelper.readBits(3);
+      numberType = bitBuffer.readBits(3);
       if (numberMode === 0) {
-        numberPlan = pduHelper.readBits(4);
+        numberPlan = bitBuffer.readBits(4);
       }
     }
 
@@ -803,7 +814,7 @@ var CdmaPDUHelper = {
     debug(" digitMode: " + digitMode + ", numberMode: " + numberMode +
           ", numberType: " + numberType + ", numberPlan: " + numberPlan);
 
-    var numFields = pduHelper.readBits(8);
+    var numFields = bitBuffer.readBits(8);
 
     debug("numFields :" + numFields);
 
@@ -811,10 +822,10 @@ var CdmaPDUHelper = {
       var addrDigit = null;
       if (digitMode === 0) {
         // DTMF 4 bit encoding, C.S0005-D, 2.7.1.3.2.4-4
-        addrDigit = pduHelper.readBits(4);
+        addrDigit = bitBuffer.readBits(4);
         address += this.dtmfChars.charAt(addrDigit);
       } else {
-        addrDigit = pduHelper.readBits(8);
+        addrDigit = bitBuffer.readBits(8);
         if (numberMode === 0) {
           // ASCII represntation with MSB set to 0
           // Just treat as normal ASCII?
@@ -854,7 +865,7 @@ var CdmaPDUHelper = {
   },
 
   relativeTimeDecoder: function relativeTimeDecoder() {
-    var relativeTime = pduHelper.readBits(8);
+    var relativeTime = bitBuffer.readBits(8);
     if (relativeTime === 248) {
       // Valid until registration area changes, discard if not registered
       return -2;
@@ -883,7 +894,7 @@ var CdmaPDUHelper = {
   },
 
   smsParameterDecoder: function(id, msg) {
-    var length = pduHelper.readHexOctet();
+    var length = bitBuffer.readBits(8);
 
     debug("===== SMS Parameter Decoder =====");
     debug("Parameter: " + parameterIdMap[id] + "(" + id + ")");
@@ -896,7 +907,7 @@ var CdmaPDUHelper = {
           return;
         }
 
-        msg.tID = pduHelper.readBits(16);
+        msg.tID = bitBuffer.readBits(16);
         debug("Value: " + msg.tID);
         break;
       case 1: // Service Category, C.S0015-B v2.0, 3.4.3.2
@@ -905,7 +916,7 @@ var CdmaPDUHelper = {
           return;
         }
 
-        msg.category = pduHelper.readBits(16);
+        msg.category = bitBuffer.readBits(16);
         debug("Value: " + msg.category);
         break;
       case 2: // Originate Address, C.S0015-B v2.0, 3.4.3.3
@@ -921,14 +932,14 @@ var CdmaPDUHelper = {
         // Unsupported
         break;
       case 6: // Bearer Reply Option, C.S0015-B v2.0, 3.4.3.5
-        msg.bearerReplyOpt.replySeq = pduHelper.readBits(6);
+        msg.bearerReplyOpt.replySeq = bitBuffer.readBits(6);
         debug("Value: " + msg.bearerReplyOpt.replySeq);
         break;
       case 7: // Cause Code, C.S0015-B v2.0, 3.4.3.6
-        msg.causeCode.replySeq = pduHelper.readBits(6);
-        msg.causeCode.errorClass = pduHelper.readBits(2);
+        msg.causeCode.replySeq = bitBuffer.readBits(6);
+        msg.causeCode.errorClass = bitBuffer.readBits(2);
         if (msg.causeCode.errorClass !== 0) {
-          msg.causeCode.causeCode = pduHelper.readBits(8);
+          msg.causeCode.causeCode = bitBuffer.readBits(8);
         }
         break;
       case 8: // Bearer Data, C.S0015-B v2.0, 3.4.3.7, too complex so implement
@@ -938,7 +949,7 @@ var CdmaPDUHelper = {
       default:
         break;
     };
-    pduHelper.nextOctecAlign();
+    bitBuffer.nextOctetAlign();
     return length;
   },
 
@@ -948,21 +959,21 @@ var CdmaPDUHelper = {
     while (msgSize > 0) {
       switch (encoding) {
         case 0: // Octec
-          msgDigit = pduHelper.readBits(8);
+          msgDigit = bitBuffer.readBits(8);
           message += String.fromCharCode(msgDigit);
           msgSize--;
           break;
         case 1: // IS-91 Extended Protocol Message
           break;
         case 2: // 7-bit ASCII
-          msgDigit = pduHelper.readBits(7);
+          msgDigit = bitBuffer.readBits(7);
           message += String.fromCharCode(msgDigit);
           msgSize--;
           break;
         case 3: // IA5
           break;
         case 4: // Unicode
-          msgDigit = pduHelper.readBits(16);
+          msgDigit = bitBuffer.readBits(16);
           message += String.fromCharCode(msgDigit);
           msgSize--;
           break;
@@ -988,8 +999,8 @@ var CdmaPDUHelper = {
         remainBufSize = dataBufSize;  // In bytes
     while (remainBufSize > 0) {
       // Fixed header
-      var id = pduHelper.readBits(8),
-          length = pduHelper.readBits(8);
+      var id = bitBuffer.readBits(8),
+          length = bitBuffer.readBits(8);
 
       remainBufSize -= (2 + length);
 
@@ -999,30 +1010,30 @@ var CdmaPDUHelper = {
 
       switch(id) {
         case 0: // Message Identifier, C.S0015-B v2.0, 4.5.1
-          bearerData.msgType = pduHelper.readBits(4);
-          bearerData.msgId = pduHelper.readBits(16);
-          bearerData.userHeader = pduHelper.readBits(1);
+          bearerData.msgType = bitBuffer.readBits(4);
+          bearerData.msgId = bitBuffer.readBits(16);
+          bearerData.userHeader = bitBuffer.readBits(1);
           debug("MSG Type: " + msgTypeMap[bearerData.msgType] + "(" + bearerData.msgType +
                "), MSG ID: " + bearerData.msgId + ", user header: " + bearerData.userHeader);
           break;
         case 1: // User Data, C.S0015-B v2.0, 4.5.2
-          bearerData.msgEncoding = pduHelper.readBits(5);
+          bearerData.msgEncoding = bitBuffer.readBits(5);
           if (bearerData.msgEncoding === 1 ||
               bearerData.msgEncoding === 10) {
-              bearerData.userMsgType = pduHelper.readBits(8);
+              bearerData.userMsgType = bitBuffer.readBits(8);
           }
 
           debug("MSG Encoding: " + msgEncodingMap[bearerData.msgEncoding] +
                "(" + bearerData.msgEncoding + "), msgType: " + bearerData.userMsgType );
 
           // Decode message based on encoding
-          var numFields = pduHelper.readBits(8);
+          var numFields = bitBuffer.readBits(8);
           debug("Text Length: " + numFields);
           bearerData.message = (bearerData.message || "") + this.messageDecoder(bearerData.msgEncoding, numFields);
           debug( "Message: \"" + bearerData.message + "\"");
           break;
         case 2: // User Response Code, C.S0015-B v2.0, 4.5.3
-          bearerData.responseCode = pduHelper.readBits(8);
+          bearerData.responseCode = bitBuffer.readBits(8);
           debug("Value: " + bearerData.responseCode);
           break;
         case 3: // Message Center Time Stamp, C.S0015-B v2.0, 4.5.4
@@ -1048,39 +1059,39 @@ var CdmaPDUHelper = {
           debug("Value: " + bearerData.deliveryTimeRelative + " seconds");
           break;
         case 8: // Priority Indicator, C.S0015-B v2.0, 4.5.9
-          bearerData.priority = pduHelper.readBits(2);
+          bearerData.priority = bitBuffer.readBits(2);
           debug("Value: " + priorityMap[bearerData.priority] + "(" + bearerData.priority + ")" );
           break;
         case 9: // Privacy Indicator, C.S0015-B v2.0, 4.5.10
-          bearerData.privacy = pduHelper.readBits(2);
+          bearerData.privacy = bitBuffer.readBits(2);
           v("Value: " + privacyMap[bearerData.privacy] + "(" + bearerData.privacy + ")" );
           break;
         case 10: // Reply Option, C.S0015-B v2.0, 4.5.11
-          bearerData.userAck = pduHelper.readBits(1);
-          bearerData.deliverAck = pduHelper.readBits(1);
-          bearerData.readAck = pduHelper.readBits(1);
-          bearerData.deliverReport = pduHelper.readBits(1);
+          bearerData.userAck = bitBuffer.readBits(1);
+          bearerData.deliverAck = bitBuffer.readBits(1);
+          bearerData.readAck = bitBuffer.readBits(1);
+          bearerData.deliverReport = bitBuffer.readBits(1);
           break;
         case 11: // Number of Messages, C.S0015-B v2.0, 4.5.12
           bearerData.msgNum = pduHelper.BcdDecoder(data);
           break;
         case 12: // Alert on Message Delivery, C.S0015-B v2.0, 4.5.13
-          bearerData.alertPriority = pduHelper.readBits(2);
+          bearerData.alertPriority = bitBuffer.readBits(2);
           break;
         case 13: // Language Indicator, C.S0015-B v2.0, 4.5.14
-          bearerData.languageIndex = pduHelper.readBits(8);
+          bearerData.languageIndex = bitBuffer.readBits(8);
           break;
         case 14: // Callback Number, C.S0015-B v2.0, 4.5.15
           bearerData.callbackNumber = this.addressDecoder(data, 0);
           break;
         case 15: // Message Display Mode, C.S0015-B v2.0, 4.5.16
-          bearerData.msgDiplayMode = pduHelper.readBits(2);
+          bearerData.msgDiplayMode = bitBuffer.readBits(2);
           break;
         case 16: // Multiple Encoding User Data, C.S0015-B v2.0, 4.5.17
           // FIXME: Not Tested
           while (true) {
-            var msgEncoding = pduHelper.readBits(5),
-                numFields = pduHelper.readBits(8);
+            var msgEncoding = bitBuffer.readBits(5),
+                numFields = bitBuffer.readBits(8);
             if (!msgEncoding) {
               break;
             }
@@ -1092,20 +1103,20 @@ var CdmaPDUHelper = {
           }
           break;
         case 17: // Message Deposit Index, C.S0015-B v2.0, 4.5.18
-          bearerData.msgDepositIndex = pduHelper.readBits(16);
+          bearerData.msgDepositIndex = bitBuffer.readBits(16);
           break;
         case 20: // Message Status, C.S0015-B v2.0, 4.5.21
-          bearerData.msgErrorClass = pduHelper.readBits(2);
-          bearerData.msgStatuCode = pduHelper.readBits(6);
+          bearerData.msgErrorClass = bitBuffer.readBits(2);
+          bearerData.msgStatuCode = bitBuffer.readBits(6);
           break;
         case 21: // TP-Failure Cause, C.S0015-B v2.0, 4.5.22
-          bearerData.tpFailureCause = pduHelper.readBits(8);
+          bearerData.tpFailureCause = bitBuffer.readBits(8);
           break;
         default:
           // For other unimplemented subparameter, just ignore the data
           break;
       };
-      pduHelper.nextOctecAlign();
+      bitBuffer.nextOctetAlign();
     }
   return bearerData;
   }
